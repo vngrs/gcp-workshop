@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connect
+  labels:
+    app: connect
+spec:
+  selector:
+    matchLabels:
+      app: connect
+      version: v1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 75%
+      maxUnavailable: 25%
+  template:
+    metadata:
+      labels:
+        app: connect
+        version: v1
+    spec:
+      #Connect to cloudsql from cloud shell with:
+      #gcloud sql connect $INSTANCE --user=root
+      #CREATE DATABASE kubernetes;
+      #Enable API From https://console.developers.google.com/apis/api/sqladmin.googleapis.com if necessary
+      #Create the service role from IAM Console, rename the file to credentials.json and run
+      #kubectl create secret generic cloudsql-instance-credentials --from-file=filename.json
+      volumes:
+      - name: cloudsql-instance-credentials
+        secret:
+          secretName: cloudsql-instance-credentials
+      containers:
+      #Get the connection string from Cloud SQL console
+      - name: cloudsql-proxy
+        image: gcr.io/cloudsql-docker/gce-proxy:1.11
+        command: ["/cloud_sql_proxy",
+                  "-instances=<INSTANCE_CONNECTION_NAME>=tcp:3306",
+                  "-credential_file=/secrets/cloudsql/credentials.json"]
+        securityContext:
+          runAsUser: 2  # non-root user
+          allowPrivilegeEscalation: false
+        volumeMounts:
+        - name: cloudsql-instance-credentials
+          mountPath: /secrets/cloudsql
+          readOnly: true
+        resources:
+          limits:
+            cpu: 350m
+            memory: 550Mi
+          requests:
+            cpu: 300m
+            memory: 500Mi
+      - name: backend
+        image: eu.gcr.io/devnot-workshop/connect:0.0.1
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 5000
+        env:
+        - name: PORT
+          value: "5000"
+        - name: MYSQL_HOST
+          value: "127.0.0.1"
+        - name: MYSQL_USER
+          valueFrom:
+            secretKeyRef:
+              name: mysql
+              key: username
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql
+              key: password
+        - name: MYSQL_DB
+          valueFrom:
+            secretKeyRef:
+              name: mysql
+              key: database
+        livenessProbe:
+          failureThreshold: 5
+          tcpSocket:
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 10
+        readinessProbe:
+          failureThreshold: 5
+          httpGet:
+            path: /healthz
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 60
+          successThreshold: 1
+          timeoutSeconds: 10
+        resources:
+          limits:
+            cpu: 350m
+            memory: 550Mi
+          requests:
+            cpu: 300m
+            memory: 500Mi
+        
